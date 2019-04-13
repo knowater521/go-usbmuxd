@@ -3,8 +3,8 @@ package USB
 import (
 	"time"
 
-	"../frames"
-	"../transmission"
+	"github.com/yichengchen/go-usbmuxd/frames"
+	"github.com/yichengchen/go-usbmuxd/transmission"
 )
 
 type (

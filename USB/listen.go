@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net"
 
-	"../frames"
+	"github.com/yichengchen/go-usbmuxd/frames"
 	"howett.net/plist"
 )
 

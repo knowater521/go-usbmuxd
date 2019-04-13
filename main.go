@@ -1,18 +1,16 @@
 package main
 
 import (
-	"io"
 	"log"
-	"os"
 
-	"./USB"
-	"./frames"
-	"./transmission"
+	"github.com/yichengchen/go-usbmuxd/USB"
+	"github.com/yichengchen/go-usbmuxd/frames"
+	"github.com/yichengchen/go-usbmuxd/transmission"
 )
 
 // some global vars
 var connectHandle USB.ConnectedDevices
-var port = 29173
+var port = 2345
 var pluggedUSBDevices map[int]frames.USBDeviceAttachedDetachedFrame
 var connectedUSB int // only stores the device id
 var scanningInstance USB.Scan
@@ -24,15 +22,6 @@ func main() {
 	pluggedUSBDevices = map[int]frames.USBDeviceAttachedDetachedFrame{}
 	scanningInstance = USB.Scan{}
 	self = USBDeviceDelegate{}
-
-	// logger
-	logFile, err := os.OpenFile("kusb_ios.log", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
-	if err != nil {
-		log.Println(err)
-	}
-	defer logFile.Close()
-	mw := io.MultiWriter(os.Stdout, logFile)
-	log.SetOutput(mw)
 
 	// create a USB.Listen(USBDeviceDelegate) instance. Pass a delegate to resolve the attached and detached callbacks
 	// then on device added save ot to array/ map and send connect to a port with proper tag

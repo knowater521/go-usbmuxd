@@ -8,7 +8,7 @@ import (
 	"log"
 	"net"
 
-	"../frames"
+	"github.com/yichengchen/go-usbmuxd/frames"
 	"howett.net/plist"
 )
 
