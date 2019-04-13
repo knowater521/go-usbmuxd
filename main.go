@@ -84,7 +84,7 @@ func (usb USBDeviceDelegate) USBDeviceDidFailToConnect(device USB.ConnectedDevic
 	// error while communication in the socket
 	// start scan
 	connectedUSB = -1
-	pluggedDeviceID := getFirstPluggedDeviceId()
+	pluggedDeviceID := getFirstPluggedDeviceID()
 	if pluggedDeviceID != -1 {
 		scanningInstance.Start(&connectHandle, pluggedUSBDevices[pluggedDeviceID], port)
 	}
@@ -92,7 +92,7 @@ func (usb USBDeviceDelegate) USBDeviceDidFailToConnect(device USB.ConnectedDevic
 }
 
 // USBDeviceDidReceiveData - data received callback
-func (usb USBDeviceDelegate) USBDeviceDidReceiveData(device USB.ConnectedDevices, deviceID int, messageTAG uint32, data []byte) {
+func (usb USBDeviceDelegate) USBDeviceDidReceiveData(device USB.ConnectedDevices, deviceID int, messageTAG uint32, tag uint32, data []byte) {
 	// received data from the device
 	log.Println(string(data))
 	//device.SendData(data[20:], 106)
@@ -103,7 +103,7 @@ func (usb USBDeviceDelegate) USBDeviceDidDisconnect(devices USB.ConnectedDevices
 	// socket disconnect
 	// start scan
 	connectedUSB = -1
-	pluggedDeviceID := getFirstPluggedDeviceId()
+	pluggedDeviceID := getFirstPluggedDeviceID()
 	if pluggedDeviceID != -1 {
 		scanningInstance.Start(&connectHandle, pluggedUSBDevices[pluggedDeviceID], port)
 	}
@@ -111,9 +111,9 @@ func (usb USBDeviceDelegate) USBDeviceDidDisconnect(devices USB.ConnectedDevices
 
 // MARK - helper functions here
 // Needs restructuring, removal or other implementation
-func getFirstPluggedDeviceId() int {
-	var deviceID int = -1
-	for deviceID, _ = range pluggedUSBDevices {
+func getFirstPluggedDeviceID() int {
+	var deviceID = -1
+	for deviceID = range pluggedUSBDevices {
 		break
 	}
 	return deviceID
