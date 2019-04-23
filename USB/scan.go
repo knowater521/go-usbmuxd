@@ -22,13 +22,13 @@ func (scan *Scan) Start(device *ConnectedDevices, frame frames.USBDeviceAttached
 			// scan here
 			// first check the chan for any interrupt
 			// if interrupt is there ... break the loop and set isScanning false
-			for i := 0; i < 300; i++ {
+			for {
 				if scan.IsScanning && device.Connection != nil {
 					device.Connect(transmission.Tunnel(), frame, toPort)
 				} else {
 					break
 				}
-				time.Sleep(time.Second * 1)
+				time.Sleep(time.Second * 2)
 			}
 			if scan.IsScanning {
 				scan.IsScanning = false
