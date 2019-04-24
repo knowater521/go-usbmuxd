@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -82,9 +83,13 @@ func sendConnectRequestToSocket(deviceID int, toPort int) []byte {
 }
 
 func connectFrameParser(conn net.Conn, deviceID int, toPort int, device ConnectedDevices) {
-	chunk := make([]byte, 2500000)
+	buf := make([]byte, 1024*50)
+	messageSize := 0
+	messageType := uint32(0)
+	messageTag := uint32(0)
+	messagePayload := make([]byte, 0)
 	for {
-		n, err := conn.Read(chunk)
+		n, err := conn.Read(buf)
 		if err != nil {
 			if err != io.EOF {
 				panic("[USB-ERROR-iCONNECT-1] : Unable to read data stream from the USB channel")
@@ -94,7 +99,7 @@ func connectFrameParser(conn net.Conn, deviceID int, toPort int, device Connecte
 		}
 		// initial check for message type
 		var data frames.USBGenericACKFrame
-		decoder := plist.NewDecoder(bytes.NewReader(chunk[16:n]))
+		decoder := plist.NewDecoder(bytes.NewReader(buf[16:n]))
 		decoder.Decode(&data)
 		if data.MessageType == "Result" && data.Number == 0 {
 			device.Delegate.USBDeviceDidSuccessfullyConnect(device, deviceID, toPort)
@@ -114,13 +119,33 @@ func connectFrameParser(conn net.Conn, deviceID int, toPort int, device Connecte
 			device.Delegate.USBDeviceDidFailToConnect(device, deviceID, toPort, errors.New(errorMessage))
 		}
 		if data.MessageType != "Result" {
-			// parse the TAG and other relevant header info
-			headerBuffer := chunk[:16]
-			// log.Println(binary.BigEndian.Uint32(headerBuffer[0:4]))   //version
-			// log.Println(binary.BigEndian.Uint32(headerBuffer[4:8]))   // type
-			// log.Println(binary.BigEndian.Uint32(headerBuffer[8:12]))  //tag
-			// log.Println(binary.BigEndian.Uint32(headerBuffer[12:16])) //payloadSize
-			device.Delegate.USBDeviceDidReceiveData(device, deviceID, binary.BigEndian.Uint32(headerBuffer[4:8]), binary.BigEndian.Uint32(headerBuffer[8:12]), chunk[16:n])
+
+			if messageSize == 0 {
+				// parse the TAG and other relevant header info
+				headerBuffer := buf[:16]
+				// log.Println(binary.BigEndian.Uint32(headerBuffer[0:4]))   //version
+				// log.Println(binary.BigEndian.Uint32(headerBuffer[4:8]))   // type
+				// log.Println(binary.BigEndian.Uint32(headerBuffer[8:12]))  //tag
+				// log.Println(binary.BigEndian.Uint32(headerBuffer[12:16])) //payloadSize
+				messageType = binary.BigEndian.Uint32(headerBuffer[4:8])
+				messageTag = binary.BigEndian.Uint32(headerBuffer[8:12])
+				messageSize = int(binary.BigEndian.Uint32(headerBuffer[12:16]))
+				messagePayload = buf[16:n]
+			} else {
+				messagePayload = append(messagePayload, buf[:n]...)
+			}
+
+			messageLength := len(messagePayload)
+			switch {
+			case messageLength == messageSize:
+				device.Delegate.USBDeviceDidReceiveData(device, deviceID, messageTag, messageType, messagePayload)
+				messageSize = 0
+			case messageLength > messageSize:
+				fmt.Println("messageLength > messageSize ????wtf", messageLength, messageSize)
+			case messageLength < messageSize:
+				continue
+			}
+
 		}
 	}
 }
