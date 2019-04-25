@@ -13,6 +13,8 @@ import (
 	"howett.net/plist"
 )
 
+var peerTalKVersion = []byte{0, 0, 0, 1}
+
 type (
 	ConnectedDeviceDelegate interface {
 		USBDeviceDidSuccessfullyConnect(device ConnectedDevices, deviceID int, toPort int)
@@ -84,7 +86,7 @@ func sendConnectRequestToSocket(deviceID int, toPort int) []byte {
 
 func connectFrameParser(conn net.Conn, deviceID int, toPort int, device ConnectedDevices) {
 	buf := make([]byte, 1024*50)
-	messageSize := 0
+	messageOffset := 0
 	messageType := uint32(0)
 	messageTag := uint32(0)
 	messagePayload := make([]byte, 0)
@@ -120,29 +122,37 @@ func connectFrameParser(conn net.Conn, deviceID int, toPort int, device Connecte
 		}
 		if data.MessageType != "Result" {
 
-			if messageSize == 0 {
+			if messageOffset == 0 {
 				// parse the TAG and other relevant header info
 				headerBuffer := buf[:16]
-				// log.Println(binary.BigEndian.Uint32(headerBuffer[0:4]))   //version
-				// log.Println(binary.BigEndian.Uint32(headerBuffer[4:8]))   // type
-				// log.Println(binary.BigEndian.Uint32(headerBuffer[8:12]))  //tag
-				// log.Println(binary.BigEndian.Uint32(headerBuffer[12:16])) //payloadSize
+				version := headerBuffer[0:4]
+				if !bytes.Equal(version, peerTalKVersion) {
+					messageOffset = 0
+					continue
+				}
 				messageType = binary.BigEndian.Uint32(headerBuffer[4:8])
 				messageTag = binary.BigEndian.Uint32(headerBuffer[8:12])
-				messageSize = int(binary.BigEndian.Uint32(headerBuffer[12:16]))
-				messagePayload = buf[16:n]
+				messageSize := int(binary.BigEndian.Uint32(headerBuffer[12:16]))
+				messagePayload = make([]byte, messageSize)
+				copy(messagePayload[messageOffset:], buf[16:n])
+				messageOffset = n - 16
 			} else {
-				messagePayload = append(messagePayload, buf[:n]...)
+				if messageOffset+n > len(messagePayload) {
+					fmt.Println("messageOffset+n > len(messagePayload)")
+					messageOffset = 0
+					continue
+				}
+				copy(messagePayload[messageOffset:], buf[:n])
+				messageOffset += n
 			}
 
-			messageLength := len(messagePayload)
+			messageSize := len(messagePayload)
 			switch {
-			case messageLength == messageSize:
+			case messageOffset == messageSize:
 				device.Delegate.USBDeviceDidReceiveData(device, deviceID, messageTag, messageType, messagePayload)
-				messageSize = 0
-			case messageLength > messageSize:
-				fmt.Println("messageLength > messageSize ????wtf", messageLength, messageSize)
-			case messageLength < messageSize:
+				messageOffset = 0
+			case messageOffset < messageSize:
+				// fmt.Println("messageOffset < messageSize", messageLength, messageSize)
 				continue
 			}
 
