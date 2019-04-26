@@ -10,8 +10,11 @@ import (
 	"howett.net/plist"
 )
 
-func Listen(conn net.Conn, delegate USBDeviceDelegate) net.Conn {
+var done *bool
+
+func Listen(conn net.Conn, delegate USBDeviceDelegate, d *bool) net.Conn {
 	// start a tunnel here, and then send the listen frame to that connected socket
+	done = d
 	go frameParser(conn, delegate)
 
 	// send a listen request to usbmuxd daemon socket
@@ -25,7 +28,10 @@ func frameParser(conn net.Conn, delegate USBDeviceDelegate) {
 	for {
 		n, err := conn.Read(chunk)
 		if err != nil {
-			panic("[USB-ERROR-READ-1] : Unable to read data stream from the USB channel")
+			if !*done {
+				panic("[USB-ERROR-READ-1] : Unable to read data stream from the USB channel")
+			}
+			break
 		}
 		// initial check for message type
 		var data frames.USBGenericACKFrame
