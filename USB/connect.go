@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -84,12 +83,16 @@ func sendConnectRequestToSocket(deviceID int, toPort int) []byte {
 	return requestBuffer
 }
 
+var (
+	messageOffset  = 0
+	messageType    = uint32(0)
+	messageTag     = uint32(0)
+	messagePayload = make([]byte, 0)
+)
+
 func connectFrameParser(conn net.Conn, deviceID int, toPort int, device ConnectedDevices) {
 	buf := make([]byte, 1024*50)
-	messageOffset := 0
-	messageType := uint32(0)
-	messageTag := uint32(0)
-	messagePayload := make([]byte, 0)
+
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
@@ -121,41 +124,52 @@ func connectFrameParser(conn net.Conn, deviceID int, toPort int, device Connecte
 			device.Delegate.USBDeviceDidFailToConnect(device, deviceID, toPort, errors.New(errorMessage))
 		}
 		if data.MessageType != "Result" {
-
-			if messageOffset == 0 {
-				// parse the TAG and other relevant header info
-				headerBuffer := buf[:16]
-				version := headerBuffer[0:4]
-				if !bytes.Equal(version, peerTalKVersion) {
-					messageOffset = 0
-					continue
-				}
-				messageType = binary.BigEndian.Uint32(headerBuffer[4:8])
-				messageTag = binary.BigEndian.Uint32(headerBuffer[8:12])
-				messageSize := int(binary.BigEndian.Uint32(headerBuffer[12:16]))
-				messagePayload = make([]byte, messageSize)
-				copy(messagePayload[messageOffset:], buf[16:n])
-				messageOffset = n - 16
-			} else {
-				if messageOffset+n > len(messagePayload) {
-					fmt.Println("messageOffset+n > len(messagePayload)")
-					messageOffset = 0
-					continue
-				}
-				copy(messagePayload[messageOffset:], buf[:n])
-				messageOffset += n
-			}
-
-			messageSize := len(messagePayload)
-			switch {
-			case messageOffset == messageSize:
-				device.Delegate.USBDeviceDidReceiveData(device, deviceID, messageTag, messageType, messagePayload)
-				messageOffset = 0
-			case messageOffset < messageSize:
-				// fmt.Println("messageOffset < messageSize", messageLength, messageSize)
-				continue
-			}
-
+			parseData(buf, n, deviceID, device)
 		}
+	}
+}
+
+func parseData(buf []byte, n int, deviceID int, device ConnectedDevices) {
+	if messageOffset == -1 {
+		// parse the TAG and other relevant header info
+		headerBuffer := buf[:16]
+		version := headerBuffer[0:4]
+		if !bytes.Equal(version, peerTalKVersion) {
+			messageOffset = -1
+			return
+		}
+		messageType = binary.BigEndian.Uint32(headerBuffer[4:8])
+		messageTag = binary.BigEndian.Uint32(headerBuffer[8:12])
+		messageSize := int(binary.BigEndian.Uint32(headerBuffer[12:16]))
+		messagePayload = make([]byte, messageSize)
+
+		messageOffset = 0
+		remainData := make([]byte, n-16)
+		copy(remainData[:], buf[16:])
+		parseData(remainData, len(remainData), deviceID, device)
+		return
+	} else {
+		if messageOffset+n > len(messagePayload) {
+			// fmt.Println("messageOffset+n > len(messagePayload)", len(messagePayload)-messageOffset, n)
+			copy(messagePayload[messageOffset:], buf[:len(messagePayload)-messageOffset])
+			device.Delegate.USBDeviceDidReceiveData(device, deviceID, messageTag, messageType, messagePayload)
+			remainData := make([]byte, n-messageOffset)
+			copy(remainData, buf[len(messagePayload):n])
+			messageOffset = -1
+			parseData(remainData, len(remainData), deviceID, device)
+			return
+		}
+		copy(messagePayload[messageOffset:], buf[:n])
+		messageOffset += n
+	}
+
+	messageSize := len(messagePayload)
+	switch {
+	case messageOffset == messageSize:
+		device.Delegate.USBDeviceDidReceiveData(device, deviceID, messageTag, messageType, messagePayload)
+		messageOffset = -1
+	case messageOffset < messageSize:
+		// fmt.Println("messageOffset < messageSize", messageLength, messageSize)
+		return
 	}
 }
