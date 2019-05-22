@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 
 	"github.com/yichengchen/go-usbmuxd/frames"
@@ -17,43 +18,61 @@ func Listen(conn net.Conn, delegate USBDeviceDelegate, d *bool) net.Conn {
 	done = d
 	go frameParser(conn, delegate)
 
-	// send a listen request to usbmuxd daemon socket
+	//send a listen request to usbmuxd daemon socket
 	conn.Write(sendListenRequestToSocket())
 
 	return conn
 }
 
 func frameParser(conn net.Conn, delegate USBDeviceDelegate) {
-	chunk := make([]byte, 2500000)
-	for {
-		n, err := conn.Read(chunk)
-		if err != nil {
-			if !*done {
-				panic("[USB-ERROR-READ-1] : Unable to read data stream from the USB channel")
-			}
-			break
-		}
-		// initial check for message type
-		var data frames.USBGenericACKFrame
-		decoder := plist.NewDecoder(bytes.NewReader(chunk[16:n]))
-		decoder.Decode(&data)
 
-		if data.MessageType == "Result" && data.Number != 0 {
-			delegate.USBDidReceiveErrorWhilePluggingOrUnplugging(errors.New("[USB-ERROR-LISTEN-RESP-1] : Illegal response received"), string(chunk[16:n]))
+	for {
+		lengthBuf := make([]byte, 16)
+		_, err := io.ReadFull(conn, lengthBuf)
+		if err != nil {
+			panic(err)
 		}
-		if data.MessageType != "Result" {
-			var data frames.USBDeviceAttachedDetachedFrame
-			decoder = plist.NewDecoder(bytes.NewReader(chunk[16:n]))
-			decoder.Decode(&data)
-			if data.MessageType == "Attached" {
-				delegate.USBDeviceDidPlug(data)
-			} else if data.MessageType == "Detached" {
-				delegate.USBDeviceDidUnPlug(data)
-			} else {
-				delegate.USBDidReceiveErrorWhilePluggingOrUnplugging(errors.New("[USB-ERROR-LISTEN-2] : Unable to parse the response"), string(chunk[16:n]))
-			}
+		length := binary.LittleEndian.Uint32(lengthBuf[0:4]) - 16
+		version := binary.LittleEndian.Uint32(lengthBuf[4:8])
+		// msgType := binary.LittleEndian.Uint32(lengthBuf[8:12])
+		// tag := binary.LittleEndian.Uint32(lengthBuf[12:16])
+		// fmt.Println(length, version, msgType, tag)
+
+		if version != 1 {
+			continue
+		}
+
+		bodyBuf := make([]byte, length)
+		_, err = io.ReadFull(conn, bodyBuf)
+
+		if err != nil {
+			panic(err)
+		}
+		parse(bodyBuf, delegate)
+	}
+}
+
+func parse(chunk []byte, delegate USBDeviceDelegate) {
+	// initial check for message type
+	var data frames.USBGenericACKFrame
+	decoder := plist.NewDecoder(bytes.NewReader(chunk))
+	decoder.Decode(&data)
+	if data.MessageType == "Result" && data.Number != 0 {
+		delegate.USBDidReceiveErrorWhilePluggingOrUnplugging(errors.New("[USB-ERROR-LISTEN-RESP-1] : Illegal response received"), string(chunk))
+	}
+	if data.MessageType != "Result" {
+		var data frames.USBDeviceAttachedDetachedFrame
+		decoder = plist.NewDecoder(bytes.NewReader(chunk))
+		decoder.Decode(&data)
+		if data.MessageType == "Attached" {
+			delegate.USBDeviceDidPlug(data)
+		} else if data.MessageType == "Detached" {
+			delegate.USBDeviceDidUnPlug(data)
+		} else {
+			delegate.USBDidReceiveErrorWhilePluggingOrUnplugging(errors.New("[USB-ERROR-LISTEN-2] : Unable to parse the response"), string(chunk))
 		}
 	}
+
 }
 
 func sendListenRequestToSocket() []byte {
