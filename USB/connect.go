@@ -97,7 +97,8 @@ func connectFrameParser(conn net.Conn, deviceID int, toPort int, device Connecte
 		n, err := conn.Read(buf)
 		if err != nil {
 			if err != io.EOF {
-				panic("[USB-ERROR-iCONNECT-1] : Unable to read data stream from the USB channel")
+				log.Println(err)
+				log.Println("[USB-ERROR-iCONNECT-1] : Unable to read data stream from the USB channel")
 			}
 			device.Delegate.USBDeviceDidDisconnect(device, deviceID, toPort)
 			break
