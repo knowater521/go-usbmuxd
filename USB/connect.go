@@ -30,12 +30,64 @@ type (
 func (device ConnectedDevices) Connect(conn net.Conn, frame frames.USBDeviceAttachedDetachedFrame, port int) net.Conn {
 	device.Connection.Close()
 	device.Connection = conn
+	setupTunnel(device.Connection, frame.DeviceID, port, device)
+
 	go connectFrameParser(device.Connection, frame.DeviceID, port, device)
 
-	// now send a connect request to the device
-	device.Connection.Write(sendConnectRequestToSocket(frame.DeviceID, port))
-
 	return device.Connection
+}
+
+func setupTunnel(conn net.Conn, deviceID int, toPort int, device ConnectedDevices) {
+	// now send a connect request to the device
+	device.Connection.Write(sendConnectRequestToSocket(deviceID, toPort))
+
+	lengthBuf := make([]byte, 16)
+	_, err := io.ReadFull(conn, lengthBuf)
+	if err != nil {
+		device.Delegate.USBDeviceDidFailToConnect(device, deviceID, toPort, errors.New("[USB-ERROR-CONNECT-SetupTunnel]: Get Header length fail"))
+		return
+	}
+	length := binary.LittleEndian.Uint32(lengthBuf[0:4]) - 16
+	version := binary.LittleEndian.Uint32(lengthBuf[4:8])
+	// msgType := binary.LittleEndian.Uint32(lengthBuf[8:12])
+	// tag := binary.LittleEndian.Uint32(lengthBuf[12:16])
+	// fmt.Println(length, version, msgType, tag)
+
+	if version != 1 {
+		device.Delegate.USBDeviceDidFailToConnect(device, deviceID, toPort, errors.New("[USB-ERROR-CONNECT-SetupTunnel]: Version Fault"))
+		return
+	}
+
+	bodyBuf := make([]byte, length)
+	_, err = io.ReadFull(conn, bodyBuf)
+
+	if err != nil {
+		device.Delegate.USBDeviceDidFailToConnect(device, deviceID, toPort, errors.New("[USB-ERROR-CONNECT-SetupTunnel]: Get Header fail"))
+		return
+	}
+
+	// initial check for message type
+	var data frames.USBGenericACKFrame
+	decoder := plist.NewDecoder(bytes.NewReader(bodyBuf))
+	decoder.Decode(&data)
+	if data.MessageType == "Result" && data.Number == 0 {
+		device.Delegate.USBDeviceDidSuccessfullyConnect(device, deviceID, toPort)
+	} else if data.MessageType == "Result" && data.Number != 0 {
+		var errorMessage string
+		switch data.Number {
+		case 2:
+			// Device Disconnected
+			errorMessage = "Unable to connect to Device, might be issue with the cable or turned off"
+		case 3:
+			// Port isn't available/ busy
+			errorMessage = "Port you're requesting is unavailable"
+		case 5:
+			// UNKNOWN Error
+			errorMessage = "[IDK]: Malformed request received in the device"
+		}
+		device.Delegate.USBDeviceDidFailToConnect(device, deviceID, toPort, errors.New(errorMessage))
+	}
+
 }
 
 func (device ConnectedDevices) SendData(data []byte, tag uint32, messageTagType uint32) {
@@ -103,36 +155,17 @@ func connectFrameParser(conn net.Conn, deviceID int, toPort int, device Connecte
 			device.Delegate.USBDeviceDidDisconnect(device, deviceID, toPort)
 			break
 		}
-		// initial check for message type
-		var data frames.USBGenericACKFrame
-		decoder := plist.NewDecoder(bytes.NewReader(buf[16:n]))
-		decoder.Decode(&data)
-		if data.MessageType == "Result" && data.Number == 0 {
-			device.Delegate.USBDeviceDidSuccessfullyConnect(device, deviceID, toPort)
-		} else if data.MessageType == "Result" && data.Number != 0 {
-			var errorMessage string
-			switch data.Number {
-			case 2:
-				// Device Disconnected
-				errorMessage = "Unable to connect to Device, might be issue with the cable or turned off"
-			case 3:
-				// Port isn't available/ busy
-				errorMessage = "Port you're requesting is unavailable"
-			case 5:
-				// UNKNOWN Error
-				errorMessage = "[IDK]: Malformed request received in the device"
-			}
-			device.Delegate.USBDeviceDidFailToConnect(device, deviceID, toPort, errors.New(errorMessage))
-		}
-		if data.MessageType != "Result" {
-			parseData(buf, n, deviceID, device)
-		}
+		parseData(buf, n, deviceID, device)
 	}
 }
 
 func parseData(buf []byte, n int, deviceID int, device ConnectedDevices) {
 	if messageOffset == -1 {
 		// parse the TAG and other relevant header info
+		if len(buf) < 16 {
+			log.Println("len(buf) < 16", buf)
+			return
+		}
 		headerBuffer := buf[:16]
 		version := headerBuffer[0:4]
 		if !bytes.Equal(version, peerTalKVersion) {
@@ -149,20 +182,20 @@ func parseData(buf []byte, n int, deviceID int, device ConnectedDevices) {
 		copy(remainData[:], buf[16:])
 		parseData(remainData, len(remainData), deviceID, device)
 		return
-	} else {
-		if messageOffset+n > len(messagePayload) {
-			// fmt.Println("messageOffset+n > len(messagePayload)", len(messagePayload)-messageOffset, n)
-			copy(messagePayload[messageOffset:], buf[:len(messagePayload)-messageOffset])
-			device.Delegate.USBDeviceDidReceiveData(device, deviceID, messageTag, messageType, messagePayload)
-			remainData := make([]byte, n-messageOffset)
-			copy(remainData, buf[len(messagePayload):n])
-			messageOffset = -1
-			parseData(remainData, len(remainData), deviceID, device)
-			return
-		}
-		copy(messagePayload[messageOffset:], buf[:n])
-		messageOffset += n
 	}
+
+	if messageOffset+n > len(messagePayload) {
+		// fmt.Println("messageOffset+n > len(messagePayload)", len(messagePayload)-messageOffset, n)
+		copy(messagePayload[messageOffset:], buf[:len(messagePayload)-messageOffset])
+		device.Delegate.USBDeviceDidReceiveData(device, deviceID, messageTag, messageType, messagePayload)
+		remainData := make([]byte, n-messageOffset)
+		copy(remainData, buf[len(messagePayload):n])
+		messageOffset = -1
+		parseData(remainData, len(remainData), deviceID, device)
+		return
+	}
+	copy(messagePayload[messageOffset:], buf[:n])
+	messageOffset += n
 
 	messageSize := len(messagePayload)
 	switch {
