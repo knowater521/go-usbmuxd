@@ -30,7 +30,9 @@ func frameParser(conn net.Conn, delegate USBDeviceDelegate) {
 		lengthBuf := make([]byte, 16)
 		_, err := io.ReadFull(conn, lengthBuf)
 		if err != nil {
-			panic(err)
+			if !*done {
+				panic(err)
+			}
 		}
 		length := binary.LittleEndian.Uint32(lengthBuf[0:4]) - 16
 		version := binary.LittleEndian.Uint32(lengthBuf[4:8])
